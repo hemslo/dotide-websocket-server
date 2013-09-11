@@ -13,10 +13,11 @@ end
 
 BASE_URL = 'http://127.0.0.1:9292'
 
-EM.run {
-  EM::WebSocket.run(:host => "0.0.0.0", :port => 8000) do |ws|
-    ws.onopen { |handshake|
-      puts "WebSocket connection open"
+def start_server
+  EM.run {
+    EM::WebSocket.run(:host => "0.0.0.0", :port => 8000) do |ws|
+      ws.onopen { |handshake|
+        puts "WebSocket connection open"
 
       # Access properties on the EM::WebSocket::Handshake object, e.g.
       # path, query_string, origin, headers
@@ -29,15 +30,29 @@ EM.run {
 
     ws.onmessage { |msg|
       puts "Recieved message: #{msg}"
-      params = required_attributes(JSON.parse(msg), ['method', 'path','headers', 'body'])
-      return unless (params && %w(get post put delete).include?(params['method']))
+      begin
+        json = JSON.parse(msg)
+      rescue
+        res = { message: 'invalid json' }
+        ws.send res.to_json
+        next
+      end
+
+      params = required_attributes(json, ['method', 'path','headers', 'body'])
+      unless (params && %w(get post put delete).include?(params['method']))
+        res = { message: 'invalid value "path"'}
+        ws.send res.to_json
+        next
+      end
       p params
+
       method = params['method'].to_sym
       url = BASE_URL + params['path']
       req = EM::HttpRequest.new(url)
       if req.respond_to? method
         http = req.send(method, { head: params['headers'], body: params['body'] })
       end
+
       http.callback {
         res = {
           status: http.response_header.status,
@@ -45,9 +60,19 @@ EM.run {
           body: http.response
         }
         p res
-        ws.send "return: #{res.to_json}"
-     }
+        ws.send res.to_json
+      }
+
+      http.errback {
+        p http.error
+        res = {
+          message: http.error.to_s
+        }
+        ws.send res.to_json
+      }
       # ws.send "Pong: #{msg}"
     }
   end
 }
+
+end
